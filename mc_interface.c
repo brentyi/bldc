@@ -129,6 +129,10 @@ void mc_interface_init(mc_configuration *configuration) {
 			encoder_init_as5047p_spi();
 			break;
 
+		case SENSOR_PORT_MODE_AS5048_I2C:
+			encoder_init_as5048b_i2c();
+			break;
+
 		default:
 			break;
 	}
@@ -165,6 +169,10 @@ void mc_interface_set_configuration(mc_configuration *configuration) {
 
 		case SENSOR_PORT_MODE_AS5047_SPI:
 			encoder_init_as5047p_spi();
+			break;
+
+		case SENSOR_PORT_MODE_AS5048_I2C:
+			encoder_init_as5048b_i2c();
 			break;
 
 		default:

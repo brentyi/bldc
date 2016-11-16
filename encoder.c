@@ -33,11 +33,15 @@
 #define SPI_SW_CS_GPIO				HW_HALL_ENC_GPIO3
 #define SPI_SW_CS_PIN				HW_HALL_ENC_PIN3
 
+#define AS5048B_I2C_ADDRESS		0b1000000 // TODO: this should be configurable in the gui
+#define AS5048B_SAMPLE_RATE_HZ		1000 // TODO: calculate the actual upper bound
+
 // Private types
 typedef enum {
 	ENCODER_MODE_NONE = 0,
 	ENCODER_MODE_ABI,
-	ENCODER_MODE_AS5047P_SPI
+	ENCODER_MODE_AS5047P_SPI,
+	ENCODER_MODE_AS504B_I2C
 } encoder_mode;
 
 // Private variables
@@ -149,6 +153,35 @@ void encoder_init_as5047p_spi(void) {
 	index_found = true;
 }
 
+void encoder_init_as5048b_i2c(void) {
+	TIM_TimeBaseInitTypeDef  TIM_TimeBaseStructure;
+
+	// Fire up the i2c bus!
+	hw_start_i2c();
+
+	// Enable timer clock
+	HW_ENC_TIM_CLK_EN();
+
+	// Time Base configuration
+	TIM_TimeBaseStructure.TIM_Prescaler = 0;
+	TIM_TimeBaseStructure.TIM_CounterMode = TIM_CounterMode_Up;
+	TIM_TimeBaseStructure.TIM_Period = ((168000000 / 2 / AS5048_SAMPLE_RATE_HZ) - 1);
+	TIM_TimeBaseStructure.TIM_ClockDivision = 0;
+	TIM_TimeBaseStructure.TIM_RepetitionCounter = 0;
+	TIM_TimeBaseInit(HW_ENC_TIM, &TIM_TimeBaseStructure);
+
+	// Enable overflow interrupt
+	TIM_ITConfig(HW_ENC_TIM, TIM_IT_Update, ENABLE);
+
+	// Enable timer
+	TIM_Cmd(HW_ENC_TIM, ENABLE);
+
+	nvicEnableVector(HW_ENC_TIM_ISR_CH, 6);
+
+	mode = ENCODER_MODE_AS504B_I2C;
+	index_found = true;
+}
+
 bool encoder_is_configured(void) {
 	return mode != ENCODER_MODE_NONE;
 }
@@ -162,6 +195,10 @@ float encoder_read_deg(void) {
 		break;
 
 	case ENCODER_MODE_AS5047P_SPI:
+		angle = last_enc_angle;
+		break;
+
+	case ENCODER_MODE_AS5048B_I2C:
 		angle = last_enc_angle;
 		break;
 
@@ -184,14 +221,45 @@ void encoder_reset(void) {
  * Timer interrupt
  */
 void encoder_tim_isr(void) {
-	uint16_t pos;
+	switch (mode) {
+	case ENCODER_MODE_AS5047P_SPI;
+		uint16_t pos;
 
-	spi_begin();
-	spi_transfer(&pos, 0, 1);
-	spi_end();
+		spi_begin();
+		spi_transfer(&pos, 0, 1);
+		spi_end();
 
-	pos &= 0x3FFF;
-	last_enc_angle = ((float)pos * 360.0) / 16384.0;
+		pos &= 0x3FFF;
+		last_enc_angle = ((float)pos * 360.0) / 16384.0;
+
+	case ENCODER_MODE_AS5048B_I2C:
+		uint16_t pos;
+
+		// TODO: re-evaluate scoping for these
+		uint8_t txbuf[2];
+		systime_t tmo = MS2ST(t);
+		msg_t status = MSG_OK;
+
+		// Read from angle register
+		i2cAcquireBus(&HW_I2C_DEV);
+		status = i2cMasterTransmitTimeout(&HW_I2C_DEV, AS5048B_I2C_ADDRESS, 0xFE, 1, rxbuf, 0, tmo);
+		i2cReleaseBus(&HW_I2C_DEV);
+		if (status != MSG_OK) {
+			return;
+		}
+
+		i2cAcquireBus(&HW_I2C_DEV);
+		status = i2cMasterReceiveTimeout(&HW_I2C_DEV, AS5048B_I2C_ADDRESS, rxbuf, 2, tmo);
+		i2cReleaseBus(&HW_I2C_DEV);
+		if (status != MSG_OK) {
+			return;
+		}
+
+		pos = ((uint16_t) rxbuf[0]) << 6;
+		pos += (rxbuf[1] & 0x3F);
+
+		last_enc_angle = ((float)pos * 360.0) / 16384.0;
+	}
 }
 
 /**

@@ -31,10 +31,10 @@
 
 // Data types
 typedef enum {
-   MC_STATE_OFF = 0,
-   MC_STATE_DETECTING,
-   MC_STATE_RUNNING,
-   MC_STATE_FULL_BRAKE,
+	MC_STATE_OFF = 0,
+	MC_STATE_DETECTING,
+	MC_STATE_RUNNING,
+	MC_STATE_FULL_BRAKE,
 } mc_state;
 
 typedef enum {
@@ -98,7 +98,8 @@ typedef enum {
 typedef enum {
 	SENSOR_PORT_MODE_HALL = 0,
 	SENSOR_PORT_MODE_ABI,
-	SENSOR_PORT_MODE_AS5047_SPI
+	SENSOR_PORT_MODE_AS5047_SPI,
+	SENSOR_PORT_MODE_AS5048_I2C
 } sensor_port_mode;
 
 typedef struct {
@@ -504,20 +505,20 @@ typedef struct {
 	float temp_mos2;
 	float temp_mos3;
 	float temp_mos4;
-    float temp_mos5;
-    float temp_mos6;
-    float temp_pcb;
-    float current_motor;
-    float current_in;
-    float rpm;
-    float duty_now;
-    float amp_hours;
-    float amp_hours_charged;
-    float watt_hours;
-    float watt_hours_charged;
-    int tachometer;
-    int tachometer_abs;
-    mc_fault_code fault_code;
+	float temp_mos5;
+	float temp_mos6;
+	float temp_pcb;
+	float current_motor;
+	float current_in;
+	float rpm;
+	float duty_now;
+	float amp_hours;
+	float amp_hours_charged;
+	float watt_hours;
+	float watt_hours_charged;
+	int tachometer;
+	int tachometer_abs;
+	mc_fault_code fault_code;
 } mc_values;
 
 #endif /* DATATYPES_H_ */
