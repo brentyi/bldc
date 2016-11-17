@@ -34,14 +34,14 @@
 #define SPI_SW_CS_PIN				HW_HALL_ENC_PIN3
 
 #define AS5048B_I2C_ADDRESS		0b1000000 // TODO: this should be configurable in the gui
-#define AS5048B_SAMPLE_RATE_HZ		1000 // TODO: calculate the actual upper bound
+#define AS5048_SAMPLE_RATE_HZ		1000 // TODO: calculate the actual upper bound
 
 // Private types
 typedef enum {
 	ENCODER_MODE_NONE = 0,
 	ENCODER_MODE_ABI,
 	ENCODER_MODE_AS5047P_SPI,
-	ENCODER_MODE_AS504B_I2C
+	ENCODER_MODE_AS5048B_I2C
 } encoder_mode;
 
 // Private variables
@@ -178,7 +178,7 @@ void encoder_init_as5048b_i2c(void) {
 
 	nvicEnableVector(HW_ENC_TIM_ISR_CH, 6);
 
-	mode = ENCODER_MODE_AS504B_I2C;
+	mode = ENCODER_MODE_AS5048B_I2C;
 	index_found = true;
 }
 
@@ -222,43 +222,47 @@ void encoder_reset(void) {
  */
 void encoder_tim_isr(void) {
 	switch (mode) {
-	case ENCODER_MODE_AS5047P_SPI;
-		uint16_t pos;
+		case ENCODER_MODE_AS5047P_SPI:
+		{
+			uint16_t pos;
+			spi_begin();
+			spi_transfer(&pos, 0, 1);
+			spi_end();
 
-		spi_begin();
-		spi_transfer(&pos, 0, 1);
-		spi_end();
-
-		pos &= 0x3FFF;
-		last_enc_angle = ((float)pos * 360.0) / 16384.0;
-
-	case ENCODER_MODE_AS5048B_I2C:
-		uint16_t pos;
-
-		// TODO: re-evaluate scoping for these
-		uint8_t txbuf[2];
-		systime_t tmo = MS2ST(t);
-		msg_t status = MSG_OK;
-
-		// Read from angle register
-		i2cAcquireBus(&HW_I2C_DEV);
-		status = i2cMasterTransmitTimeout(&HW_I2C_DEV, AS5048B_I2C_ADDRESS, 0xFE, 1, rxbuf, 0, tmo);
-		i2cReleaseBus(&HW_I2C_DEV);
-		if (status != MSG_OK) {
-			return;
+			pos &= 0x3FFF;
+			last_enc_angle = ((float)pos * 360.0) / 16384.0;
 		}
+		case ENCODER_MODE_AS5048B_I2C:
+		{
+			uint16_t pos;
 
-		i2cAcquireBus(&HW_I2C_DEV);
-		status = i2cMasterReceiveTimeout(&HW_I2C_DEV, AS5048B_I2C_ADDRESS, rxbuf, 2, tmo);
-		i2cReleaseBus(&HW_I2C_DEV);
-		if (status != MSG_OK) {
-			return;
+			// TODO: re-evaluate scoping for these
+			uint8_t txbuf[1];
+			uint8_t rxbuf[2];
+			systime_t tmo = MS2ST(5);
+			msg_t status = MSG_OK;
+
+			// Read from angle register
+			txbuf[0] = 0xFE;
+			i2cAcquireBus(&HW_I2C_DEV);
+			status = i2cMasterTransmitTimeout(&HW_I2C_DEV, AS5048B_I2C_ADDRESS, txbuf, 1, rxbuf, 0, tmo);
+			i2cReleaseBus(&HW_I2C_DEV);
+			if (status != MSG_OK) {
+				return;
+			}
+
+			i2cAcquireBus(&HW_I2C_DEV);
+			status = i2cMasterReceiveTimeout(&HW_I2C_DEV, AS5048B_I2C_ADDRESS, rxbuf, 2, tmo);
+			i2cReleaseBus(&HW_I2C_DEV);
+			if (status != MSG_OK) {
+				return;
+			}
+
+			pos = ((uint16_t) rxbuf[0]) << 6;
+			pos += (rxbuf[1] & 0x3F);
+
+			last_enc_angle = ((float)pos * 360.0) / 16384.0;
 		}
-
-		pos = ((uint16_t) rxbuf[0]) << 6;
-		pos += (rxbuf[1] & 0x3F);
-
-		last_enc_angle = ((float)pos * 360.0) / 16384.0;
 	}
 }
 
