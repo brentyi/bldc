@@ -57,6 +57,10 @@ static void spi_begin(void);
 static void spi_end(void);
 static void spi_delay(void);
 
+// Thread setup
+static THD_FUNCTION(as5048b_thread, arg);
+static THD_WORKING_AREA(as5048b_thread_wa, 1024);
+
 void encoder_deinit(void) {
 	nvicDisableVector(HW_ENC_EXTI_CH);
 	nvicDisableVector(HW_ENC_TIM_ISR_CH);
@@ -154,29 +158,11 @@ void encoder_init_as5047p_spi(void) {
 }
 
 void encoder_init_as5048b_i2c(void) {
-	TIM_TimeBaseInitTypeDef  TIM_TimeBaseStructure;
-
 	// Fire up the i2c bus!
 	hw_start_i2c();
 
-	// Enable timer clock
-	HW_ENC_TIM_CLK_EN();
-
-	// Time Base configuration
-	TIM_TimeBaseStructure.TIM_Prescaler = 0;
-	TIM_TimeBaseStructure.TIM_CounterMode = TIM_CounterMode_Up;
-	TIM_TimeBaseStructure.TIM_Period = ((168000000 / 2 / AS5048_SAMPLE_RATE_HZ) - 1);
-	TIM_TimeBaseStructure.TIM_ClockDivision = 0;
-	TIM_TimeBaseStructure.TIM_RepetitionCounter = 0;
-	TIM_TimeBaseInit(HW_ENC_TIM, &TIM_TimeBaseStructure);
-
-	// Enable overflow interrupt
-	TIM_ITConfig(HW_ENC_TIM, TIM_IT_Update, ENABLE);
-
-	// Enable timer
-	TIM_Cmd(HW_ENC_TIM, ENABLE);
-
-	nvicEnableVector(HW_ENC_TIM_ISR_CH, 6);
+	// Create our static thread
+	chThdCreateStatic(as5048b_thread_wa, sizeof(as5048b_thread_wa), NORMALPRIO, as5048b_thread, NULL);
 
 	mode = ENCODER_MODE_AS5048B_I2C;
 	index_found = true;
@@ -221,51 +207,50 @@ void encoder_reset(void) {
  * Timer interrupt
  */
 void encoder_tim_isr(void) {
-	switch (mode) {
-		case ENCODER_MODE_AS5047P_SPI:
-		{
-			uint16_t pos;
-			spi_begin();
-			spi_transfer(&pos, 0, 1);
-			spi_end();
+	uint16_t pos;
+	spi_begin();
+	spi_transfer(&pos, 0, 1);
+	spi_end();
 
-			pos &= 0x3FFF;
-			last_enc_angle = ((float)pos * 360.0) / 16384.0;
-		}
-		case ENCODER_MODE_AS5048B_I2C:
-		{
-			uint16_t pos;
+	pos &= 0x3FFF;
+	last_enc_angle = ((float)pos * 360.0) / 16384.0;
+}
 
-			// TODO: re-evaluate scoping for these
-			uint8_t txbuf[1];
-			uint8_t rxbuf[2];
-			systime_t tmo = MS2ST(5);
-			msg_t status = MSG_OK;
+/**
+ * I2C Encoder Update Thread
+ */
+static THD_FUNCTION(as5048b_thread, arg) {
+	(void) arg;
 
-			// Read from angle register
-			txbuf[0] = 0xFE;
-			i2cAcquireBus(&HW_I2C_DEV);
-			status = i2cMasterTransmitTimeout(&HW_I2C_DEV, AS5048B_I2C_ADDRESS, txbuf, 1, rxbuf, 0, tmo);
-			i2cReleaseBus(&HW_I2C_DEV);
-			if (status != MSG_OK) {
-				return;
-			}
+	uint8_t txbuf[1];
+	uint8_t rxbuf[2];
+	uint16_t pos;
+	systime_t tmo = MS2ST(5);
+	msg_t status = MSG_OK;
 
+	chThdSleepMilliseconds(10);
+	for(;;) {
+		// Read from angle register
+		txbuf[0] = 0xFE;
+		i2cAcquireBus(&HW_I2C_DEV);
+		status = i2cMasterTransmitTimeout(&HW_I2C_DEV, AS5048B_I2C_ADDRESS, txbuf, 1, rxbuf, 0, tmo);
+		i2cReleaseBus(&HW_I2C_DEV);
+		if (status == MSG_OK) {
 			i2cAcquireBus(&HW_I2C_DEV);
 			status = i2cMasterReceiveTimeout(&HW_I2C_DEV, AS5048B_I2C_ADDRESS, rxbuf, 2, tmo);
 			i2cReleaseBus(&HW_I2C_DEV);
-			if (status != MSG_OK) {
-				return;
-			}
-
+		}
+		if (status == MSG_OK) {
 			pos = ((uint16_t) rxbuf[0]) << 6;
 			pos += (rxbuf[1] & 0x3F);
 
 			last_enc_angle = ((float)pos * 360.0) / 16384.0;
 		}
+
+		// TODO: increase frequency -- ideally this should run @ 20kHz
+		chThdSleepMilliseconds(1);
 	}
 }
-
 /**
  * Set the number of encoder counts.
  *
